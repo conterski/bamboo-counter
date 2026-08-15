@@ -20,10 +20,8 @@
     <h1>Bamboo Counter</h1>
     <p>Photograph the cut ends of the load, square on. Auto-detect finds most of
        them; tap to fix the rest.</p>
-    <label class="btn primary big">
-      Choose photo
-      <input type="file" id="file" accept="image/*" hidden>
-    </label>
+    <label class="btn primary big" for="file">Choose photo</label>
+    <input type="file" id="file" accept="image/*" class="vh">
   </div>
 
   <div id="hud" hidden>
@@ -31,7 +29,17 @@
     <div id="hint"></div>
   </div>
 
-  <div id="busy" hidden><div class="spin"></div><span id="busytext">Working…</span></div>
+  <div id="busy" hidden>
+    <div class="spin"></div>
+    <span id="busytext">Working…</span>
+    <span id="busystage"></span>
+    <button class="btn" id="busycancel">Cancel</button>
+  </div>
+</div>
+
+<div id="errbar" hidden>
+  <div id="errtext"></div>
+  <button class="btn" id="errclose">Dismiss</button>
 </div>
 
 <div id="bar" hidden>
@@ -40,9 +48,8 @@
   <button class="btn" id="fit" title="Fit to screen">⤢<small>Fit</small></button>
   <button class="btn" id="expect" title="Expected quantity">#<small>Expected</small></button>
   <button class="btn" id="save" title="Save image">⬇<small>Save</small></button>
-  <label class="btn" title="New photo">🖼<small>New</small>
-    <input type="file" id="file2" accept="image/*" hidden>
-  </label>
+  <label class="btn" title="New photo" for="file2">🖼<small>New</small></label>
+  <input type="file" id="file2" accept="image/*" class="vh">
 </div>
 
 <div id="sheet" hidden>

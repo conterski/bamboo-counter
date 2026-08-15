@@ -1,6 +1,6 @@
 /* Offline cache. A delivery yard is exactly where the signal drops, so the app
    must open and work with no network at all once it has been visited once. */
-const CACHE = 'bamboo-counter-v2';
+const CACHE = 'bamboo-counter-v3';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

@@ -108,6 +108,35 @@ function updateCount() {
   els.target.className = d === 0 ? 'exact' : (d > 0 ? 'over' : 'under');
 }
 
+/* Anything that fails on a phone is invisible to whoever wrote it, so failures
+   have to put themselves on screen in a form that can be read out or
+   screenshotted. Silent catch blocks are how the last two attempts at this bug
+   got diagnosed wrong. */
+function showError(where, e) {
+  const bits = [where];
+  if (e) {
+    bits.push(String((e && e.message) || e));
+    if (e.name) bits.push('(' + e.name + ')');
+  }
+  bits.push('— ' + navigator.userAgent);
+  const el = $('errtext');
+  el.textContent = bits.join('\n');
+  $('errbar').hidden = false;
+}
+addEventListener('error', e => showError('JS error: ' + (e.filename || '') + ':' + (e.lineno || ''), e.error || e.message));
+addEventListener('unhandledrejection', e => showError('Unhandled promise rejection', e.reason));
+
+let stageTimer = null, stageT0 = 0;
+function stage(text) {
+  stageT0 = performance.now();
+  $('busystage').textContent = text;
+  clearInterval(stageTimer);
+  stageTimer = setInterval(() => {
+    const s = ((performance.now() - stageT0) / 1000).toFixed(1);
+    $('busystage').textContent = text + '  ' + s + 's';
+  }, 200);
+}
+
 let hintTimer;
 function hint(t) {
   els.hint.textContent = t; els.hint.classList.add('show');
@@ -121,6 +150,7 @@ function toast(t) {
 function busy(on, text) {
   els.busytext.textContent = text || 'Working…';
   els.busy.hidden = !on;
+  if (!on) { clearInterval(stageTimer); $('busystage').textContent = ''; }
 }
 
 // ---------------------------------------------------------------- gestures
@@ -452,27 +482,49 @@ function normalise(src) {
   return c;
 }
 
+/* Each decode route is tried in turn and each is time-boxed, because on Safari
+   an unsupported option can leave the promise pending rather than reject. The
+   budgets are short: three routes at 6s is a worst case somebody will sit
+   through, three at 20s is not. */
 async function decode(file) {
-  let bmp = null;
+  let bmp = null, why = [];
   if (typeof createImageBitmap === 'function') {
+    stage('decode: createImageBitmap+orientation');
     try {
       bmp = await withTimeout(
-        createImageBitmap(file, { imageOrientation: 'from-image' }), 20000, 'decode');
-    } catch {}
+        createImageBitmap(file, { imageOrientation: 'from-image' }), 6000, 'bitmap+orientation');
+    } catch (e) { why.push('bitmap+orient: ' + ((e && e.message) || e)); }
     if (!bmp) {
-      try { bmp = await withTimeout(createImageBitmap(file), 20000, 'decode'); } catch {}
+      stage('decode: createImageBitmap');
+      try { bmp = await withTimeout(createImageBitmap(file), 6000, 'bitmap'); }
+      catch (e) { why.push('bitmap: ' + ((e && e.message) || e)); }
+    }
+  } else {
+    why.push('createImageBitmap unavailable');
+  }
+  if (!bmp) {
+    stage('decode: img element');
+    try { bmp = await withTimeout(decodeViaElement(file), 8000, 'img element'); }
+    catch (e) {
+      why.push('img: ' + ((e && e.message) || e));
+      throw new Error(why.join(' | '));
     }
   }
-  if (!bmp) bmp = await withTimeout(decodeViaElement(file), 20000, 'decode');
+  stage('resizing');
   return normalise(bmp);
 }
 
 // ---------------------------------------------------------------- actions
+let loadSeq = 0;
 async function loadFile(file) {
-  if (!file) return;
+  const mine = ++loadSeq;
+  if (!file) { showError('The picker returned no file.', null); return; }
   busy(true, 'Opening photo…');
+  stage(`${file.name || 'photo'} · ${file.type || 'unknown type'} · ${Math.round((file.size || 0) / 1024)} KB`);
   try {
-    img = await decode(file);
+    const c = await decode(file);
+    if (mine !== loadSeq) return;          // a newer pick superseded this one
+    img = c;
     pts = []; undoStack = [];
     els.empty.hidden = true; els.hud.hidden = false; els.bar.hidden = false;
     resize(); fit();
@@ -480,14 +532,23 @@ async function loadFile(file) {
     hint('Tap an end to add it. Tap a number to remove it.');
     storeImage(file);   // deliberately not awaited: storage must never gate the UI
   } catch (err) {
-    toast('Could not open that photo — ' + ((err && err.message) || err));
+    showError('Could not open that photo.\nfile: ' + (file.name || '?') + ' · ' +
+              (file.type || 'no type') + ' · ' + (file.size || 0) + ' bytes', err);
   } finally {
-    busy(false);
+    if (mine === loadSeq) busy(false);
   }
 }
 
-$('file').addEventListener('change', e => loadFile(e.target.files[0]));
-$('file2').addEventListener('change', e => loadFile(e.target.files[0]));
+function onPick(e) {
+  const f = e.target.files && e.target.files[0];
+  loadFile(f);
+  e.target.value = '';   // so re-picking the same photo fires change again
+}
+$('file').addEventListener('change', onPick);
+$('file2').addEventListener('change', onPick);
+
+$('busycancel').addEventListener('click', () => { loadSeq++; busy(false); });
+$('errclose').addEventListener('click', () => { $('errbar').hidden = true; });
 
 $('detect').addEventListener('click', async () => {
   if (!img) return;
@@ -649,8 +710,26 @@ async function restore() {
 }
 
 // ---------------------------------------------------------------- boot
+/* An escape hatch worth having on a device you cannot debug: ?reset=1 throws
+   away the service worker, caches and saved photo, then reloads clean. */
+async function hardReset() {
+  try {
+    if (navigator.serviceWorker) {
+      for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    }
+    if (self.caches) for (const k of await caches.keys()) await caches.delete(k);
+    localStorage.removeItem('bc-state');
+    if (self.indexedDB) indexedDB.deleteDatabase(DB);
+  } catch {}
+  location.replace(location.pathname);
+}
+
 resize();
-restore();
-if ('serviceWorker' in navigator) {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+if (/[?&]reset/.test(location.search)) {
+  hardReset();
+} else {
+  restore().catch(e => showError('Restoring the previous count failed.', e));
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
 }
