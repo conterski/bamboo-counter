@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#141414"/>
+  <g fill="none" stroke="#c8a06a" stroke-width="14">
+    <circle cx="176" cy="192" r="62"/>
+    <circle cx="320" cy="176" r="52"/>
+    <circle cx="248" cy="308" r="70"/>
+    <circle cx="374" cy="300" r="46"/>
+    <circle cx="140" cy="330" r="42"/>
+  </g>
+  <g fill="#0d0d0d">
+    <circle cx="176" cy="192" r="55"/>
+    <circle cx="320" cy="176" r="45"/>
+    <circle cx="248" cy="308" r="63"/>
+    <circle cx="374" cy="300" r="39"/>
+    <circle cx="140" cy="330" r="35"/>
+  </g>
+  <g fill="#ffd21e" font-family="system-ui,sans-serif" font-weight="700" text-anchor="middle">
+    <text x="176" y="207" font-size="52">1</text>
+    <text x="320" y="190" font-size="44">2</text>
+    <text x="248" y="327" font-size="60">3</text>
+    <text x="374" y="314" font-size="38">4</text>
+    <text x="140" y="343" font-size="34">5</text>
+  </g>
+</svg>

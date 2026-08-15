@@ -1,0 +1,19 @@
+{
+  "name": "Bamboo Counter",
+  "short_name": "Bamboo",
+  "description": "Count poles in a load photo by marking every visible cut end.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#141414",
+  "theme_color": "#141414",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
