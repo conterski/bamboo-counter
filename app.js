@@ -414,25 +414,75 @@ function isWood(R, G, B) {
   return h >= 8 && h <= 62;                // tan / straw / brown
 }
 
+// ---------------------------------------------------------------- decoding
+/* Nothing on the photo-opening path may block indefinitely. A spinner that
+   never clears is indistinguishable from a crash, and the user has no way out
+   of it, so every step here is either time-boxed or fire-and-forget. */
+const MAX_SIDE = 2800;
+
+function withTimeout(p, ms, what) {
+  return Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error((what || 'step') + ' timed out')), ms)),
+  ]);
+}
+
+function decodeViaElement(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); res(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('browser could not decode this image')); };
+    im.src = url;
+  });
+}
+
+/* Redraw at a sane size. Phone cameras produce 12MP files and Safari will drop
+   a canvas that gets too large, which fails as a blank screen rather than an
+   error. Working at 2800px is still far more resolution than counting needs. */
+function normalise(src) {
+  const w = src.naturalWidth || src.width, h = src.naturalHeight || src.height;
+  if (!w || !h) throw new Error('image has no dimensions');
+  const k = Math.min(1, MAX_SIDE / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  if (src.close) { try { src.close(); } catch {} }
+  return c;
+}
+
+async function decode(file) {
+  let bmp = null;
+  if (typeof createImageBitmap === 'function') {
+    try {
+      bmp = await withTimeout(
+        createImageBitmap(file, { imageOrientation: 'from-image' }), 20000, 'decode');
+    } catch {}
+    if (!bmp) {
+      try { bmp = await withTimeout(createImageBitmap(file), 20000, 'decode'); } catch {}
+    }
+  }
+  if (!bmp) bmp = await withTimeout(decodeViaElement(file), 20000, 'decode');
+  return normalise(bmp);
+}
+
 // ---------------------------------------------------------------- actions
 async function loadFile(file) {
   if (!file) return;
   busy(true, 'Opening photo…');
   try {
-    let bmp;
-    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
-    catch { bmp = await createImageBitmap(file); }
-    img = bmp;
+    img = await decode(file);
     pts = []; undoStack = [];
     els.empty.hidden = true; els.hud.hidden = false; els.bar.hidden = false;
     resize(); fit();
-    await storeImage(file);
     persist();
-    busy(false);
     hint('Tap an end to add it. Tap a number to remove it.');
+    storeImage(file);   // deliberately not awaited: storage must never gate the UI
   } catch (err) {
+    toast('Could not open that photo — ' + ((err && err.message) || err));
+  } finally {
     busy(false);
-    toast('Could not open that photo.');
   }
 }
 
@@ -448,11 +498,11 @@ $('detect').addEventListener('click', async () => {
     push();
     pts = found;
     renumber(); draw(); persist();
-    busy(false);
     hint(`Found ${found.length}. Now check the edges and any tight gaps.`);
   } catch (err) {
+    toast('Detection failed — tap the ends instead. (' + ((err && err.message) || err) + ')');
+  } finally {
     busy(false);
-    toast('Detection failed on this photo — tap the ends instead.');
   }
 });
 
@@ -548,24 +598,34 @@ function exportImage() {
 const DB = 'bamboo-counter';
 function idb() {
   return new Promise((res, rej) => {
+    if (!self.indexedDB) return rej(new Error('no indexedDB'));
     const q = indexedDB.open(DB, 1);
     q.onupgradeneeded = () => q.result.createObjectStore('kv');
     q.onsuccess = () => res(q.result);
-    q.onerror = () => rej(q.error);
+    q.onerror = () => rej(q.error || new Error('open failed'));
+    q.onblocked = () => rej(new Error('open blocked'));
   });
 }
-async function kv(mode, fn) {
-  try {
-    const db = await idb();
-    return await new Promise((res, rej) => {
-      const tx = db.transaction('kv', mode);
-      const r = fn(tx.objectStore('kv'));
-      tx.oncomplete = () => res(r && r.result);
-      tx.onerror = () => rej(tx.error);
-    });
-  } catch { return null; }
+/* Time-boxed, and failure is always survivable. Safari suspends IndexedDB in
+   private browsing and under storage pressure - transactions there can simply
+   never fire an event, so waiting on one is waiting forever. Losing the saved
+   photo costs a re-pick; hanging costs the whole count. */
+function kvRaw(mode, fn) {
+  return idb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction('kv', mode);
+    const r = fn(tx.objectStore('kv'));
+    tx.oncomplete = () => res(r && r.result);
+    tx.onerror = () => rej(tx.error || new Error('tx failed'));
+    tx.onabort = () => rej(tx.error || new Error('tx aborted'));
+  }));
 }
-const storeImage = blob => kv('readwrite', s => s.put(blob, 'photo'));
+async function kv(mode, fn, ms) {
+  try { return await withTimeout(kvRaw(mode, fn), ms || 4000, 'storage'); }
+  catch { return null; }
+}
+function storeImage(blob) {
+  kv('readwrite', s => s.put(blob, 'photo'), 8000);   // fire and forget
+}
 function persist() {
   try {
     localStorage.setItem('bc-state', JSON.stringify({ pts, expected }));
@@ -574,15 +634,14 @@ function persist() {
 async function restore() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('bc-state') || 'null'); } catch {}
-  const blob = await kv('readonly', s => s.get('photo'));
+  let blob = null;
+  try { blob = await kv('readonly', s => s.get('photo')); } catch {}
   if (!blob) return;
+  if (img) return;                 // a fresh pick already won the race
   try {
-    let bmp;
-    try { bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
-    catch { bmp = await createImageBitmap(blob); }
-    img = bmp;
+    img = await decode(blob);
     pts = (saved && Array.isArray(saved.pts)) ? saved.pts : [];
-    expected = saved ? saved.expected ?? null : null;
+    expected = saved ? (saved.expected ?? null) : null;
     els.empty.hidden = true; els.hud.hidden = false; els.bar.hidden = false;
     resize(); fit();
     if (pts.length) hint(`Picked up where you left off — ${pts.length} marked.`);
