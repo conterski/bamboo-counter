@@ -17,6 +17,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 #empty .logo{font-size:56px;line-height:1}
 #empty h1{margin:0;font-size:24px;font-weight:650;letter-spacing:-.2px}
 #empty p{margin:0;max-width:20rem;color:var(--dim);font-size:14px}
+#selftest{color:#6f6f6f;font-size:12px;margin-top:4px}
 
 /* ---------- hud ---------- */
 #hud{position:absolute;top:calc(12px + env(safe-area-inset-top));left:12px;right:12px;

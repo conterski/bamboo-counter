@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141414">
+<title>Bamboo Counter — self test</title>
+<style>
+  :root{--bg:#141414;--panel:#1e1e1e;--line:#2f2f2f;--ink:#f2f2f2;--dim:#9a9a9a;
+        --ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--accent:#ffd21e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);padding:16px 14px 48px;
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  h1{font-size:19px;margin:0 0 4px}
+  p.lede{color:var(--dim);margin:0 0 16px;font-size:13px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    margin:22px 0 8px;font-weight:600}
+  .row{display:flex;gap:10px;padding:8px 10px;border:1px solid var(--line);
+    border-radius:9px;margin-bottom:6px;background:var(--panel);align-items:flex-start}
+  .tag{flex:none;font-size:10px;font-weight:700;padding:3px 6px;border-radius:5px;
+    min-width:52px;text-align:center;letter-spacing:.04em}
+  .PASS{background:rgba(74,222,128,.16);color:var(--ok)}
+  .FAIL{background:rgba(248,113,113,.16);color:var(--bad)}
+  .WARN{background:rgba(251,191,36,.16);color:var(--warn)}
+  .RUN{background:rgba(255,255,255,.1);color:var(--dim)}
+  .body{flex:1;min-width:0}
+  .name{font-weight:600}
+  .detail{color:var(--dim);font-size:12px;word-break:break-word;
+    font-family:ui-monospace,Menlo,monospace;margin-top:3px;white-space:pre-wrap}
+  button,label.btn{background:var(--accent);color:#111;border:0;border-radius:10px;
+    padding:13px 18px;font-size:15px;font-weight:650;cursor:pointer;display:inline-block}
+  button.sec{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+  #out{width:100%;height:180px;background:#0d0d0d;color:#ddd;border:1px solid var(--line);
+    border-radius:9px;padding:10px;font:11px/1.4 ui-monospace,Menlo,monospace;
+    -webkit-user-select:text;user-select:text}
+  .vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<h1>Bamboo Counter — self test</h1>
+<p class="lede">Runs the app's own code on this device and reports exactly what
+works. The important one is the last section: pick the photo that failed.</p>
+
+<div class="actions">
+  <button id="run">Run checks</button>
+  <label class="btn" for="pick">Trace a photo</label>
+  <input type="file" id="pick" accept="image/*" class="vh">
+  <button class="sec" id="copy">Copy results</button>
+</div>
+
+<div id="results"></div>
+
+<!-- app.js wires itself to these on load. Kept off-screen so the real code can
+     be exercised here exactly as it runs in the app. -->
+<div class="vh" aria-hidden="true">
+  <canvas id="cv"></canvas>
+  <div id="empty"></div><div id="hud"></div><div id="bar"></div>
+  <b id="n"></b><span id="target"></span><div id="hint"></div>
+  <div id="busy"><span id="busytext"></span><span id="busystage"></span>
+    <button id="busycancel"></button></div>
+  <div id="toast"></div>
+  <div id="errbar"><div id="errtext"></div><button id="errclose"></button></div>
+  <div id="sheet"><input id="expectval"><button id="sheetok"></button>
+    <button id="sheetclear"></button></div>
+  <input type="file" id="file"><input type="file" id="file2">
+  <button id="detect"></button><button id="undo"></button><button id="fit"></button>
+  <button id="expect"></button><button id="save"></button>
+</div>
+
+<h2>Raw results — paste this back</h2>
+<textarea id="out" readonly></textarea>
+
+<p class="lede"><a href="./">← back to the app</a> &nbsp;·&nbsp;
+   <a href="./?reset=1">reset the app</a></p>
+
+<script>
+/* Deliberately standalone: if app.js cannot even parse on this browser, this
+   page still has to run and say so. */
+'use strict';
+
+var boot = [];
+window.addEventListener('error', function (e) {
+  boot.push('window.error: ' + (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+});
+window.addEventListener('unhandledrejection', function (e) {
+  boot.push('unhandledrejection: ' + ((e.reason && e.reason.message) || e.reason));
+});
+
+var results = [];
+var resEl = document.getElementById('results');
+
+function add(name, status, detail) {
+  results.push({ name: name, status: status, detail: detail || '' });
+  var d = document.createElement('div');
+  d.className = 'row';
+  d.innerHTML = '<span class="tag ' + status + '">' + status + '</span>' +
+    '<div class="body"><div class="name"></div><div class="detail"></div></div>';
+  d.querySelector('.name').textContent = name;
+  d.querySelector('.detail').textContent = detail || '';
+  resEl.appendChild(d);
+  dump();
+  return d;
+}
+function section(t) {
+  var h = document.createElement('h2'); h.textContent = t; resEl.appendChild(h);
+}
+function dump() {
+  var lines = results.map(function (r) {
+    return '[' + r.status + '] ' + r.name + (r.detail ? '  — ' + r.detail : '');
+  });
+  if (boot.length) lines.push('', 'BOOT LOG:', boot.join('\n'));
+  document.getElementById('out').value = lines.join('\n');
+}
+function err(e) {
+  if (!e) return 'unknown';
+  return (e.name ? e.name + ': ' : '') + ((e.message || String(e)));
+}
+function timed(p, ms, label) {
+  return Promise.race([p, new Promise(function (_, rej) {
+    setTimeout(function () { rej(new Error((label || 'step') + ' timed out after ' + ms + 'ms')); }, ms);
+  })]);
+}
+var t = function () { return (performance && performance.now) ? performance.now() : Date.now(); };
+
+// ---------------------------------------------------------------- synthetic image
+/* A fake load: tan rings on dark, so detectEnds can be exercised without
+   needing a photo or the network. */
+function syntheticPhoto(w, h) {
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  var x = c.getContext('2d');
+  x.fillStyle = '#101010'; x.fillRect(0, 0, w, h);
+  var n = 0;
+  for (var gy = 0; gy < 5; gy++) {
+    for (var gx = 0; gx < 7; gx++) {
+      var cx = 70 + gx * 95 + (gy % 2 ? 40 : 0), cy = 80 + gy * 95, r = 38;
+      x.beginPath(); x.arc(cx, cy, r, 0, 6.2832);
+      x.fillStyle = '#b5813f'; x.fill();            // tan rim
+      x.beginPath(); x.arc(cx, cy, r * 0.72, 0, 6.2832);
+      x.fillStyle = '#1a1208'; x.fill();            // dark bore
+      n++;
+    }
+  }
+  c._expected = n;
+  return c;
+}
+function canvasToBlob(c, type, q) {
+  return new Promise(function (res, rej) {
+    if (!c.toBlob) return rej(new Error('canvas.toBlob unsupported'));
+    c.toBlob(function (b) { b ? res(b) : rej(new Error('toBlob returned null')); }, type, q);
+  });
+}
+
+// ---------------------------------------------------------------- checks
+async function runChecks() {
+  resEl.innerHTML = ''; results = [];
+
+  section('Environment');
+  add('User agent', 'PASS', navigator.userAgent);
+  add('Page URL', 'PASS', location.href);
+  add('Secure context', window.isSecureContext ? 'PASS' : 'FAIL',
+      'isSecureContext=' + window.isSecureContext);
+  add('Device pixel ratio', 'PASS', String(window.devicePixelRatio));
+  add('Screen', 'PASS', screen.width + 'x' + screen.height +
+      ' · viewport ' + innerWidth + 'x' + innerHeight);
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      var est = await timed(navigator.storage.estimate(), 3000, 'storage.estimate');
+      add('Storage quota', 'PASS',
+          Math.round((est.usage || 0) / 1048576) + ' MB used of ' +
+          Math.round((est.quota || 0) / 1048576) + ' MB');
+    } catch (e) { add('Storage quota', 'WARN', err(e)); }
+  } else { add('Storage quota', 'WARN', 'navigator.storage.estimate unavailable'); }
+
+  section('Service worker & cache');
+  if ('serviceWorker' in navigator) {
+    try {
+      var regs = await timed(navigator.serviceWorker.getRegistrations(), 4000, 'getRegistrations');
+      add('Service worker', 'PASS', regs.length + ' registration(s); controller=' +
+          (navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'none'));
+    } catch (e) { add('Service worker', 'WARN', err(e)); }
+    try {
+      var keys = await timed(caches.keys(), 4000, 'caches.keys');
+      add('Cache storage', 'PASS', keys.join(', ') || 'empty');
+    } catch (e) { add('Cache storage', 'WARN', err(e)); }
+  } else { add('Service worker', 'WARN', 'unsupported'); }
+
+  section('Loading app.js');
+  await new Promise(function (res) {
+    var s = document.createElement('script');
+    s.src = 'app.js?selftest=' + Date.now();
+    s.onload = function () {
+      var missing = ['detectEnds', 'decode', 'normalise', 'loadFile', 'exportImage']
+        .filter(function (k) { return typeof window[k] !== 'function'; });
+      if (missing.length) add('app.js parsed', 'FAIL', 'missing after load: ' + missing.join(', '));
+      else add('app.js parsed', 'PASS', 'all entry points defined');
+      res();
+    };
+    s.onerror = function () { add('app.js parsed', 'FAIL', 'script failed to load'); res(); };
+    document.head.appendChild(s);
+  });
+
+  section('Browser capabilities');
+  add('createImageBitmap', typeof createImageBitmap === 'function' ? 'PASS' : 'WARN',
+      typeof createImageBitmap);
+  add('IndexedDB present', self.indexedDB ? 'PASS' : 'WARN', String(!!self.indexedDB));
+  try { localStorage.setItem('__t', '1'); localStorage.removeItem('__t');
+        add('localStorage writable', 'PASS', ''); }
+  catch (e) { add('localStorage writable', 'WARN', err(e)); }
+  add('URL.createObjectURL', typeof URL !== 'undefined' && URL.createObjectURL ? 'PASS' : 'FAIL', '');
+  add('Pointer events', window.PointerEvent ? 'PASS' : 'WARN', String(!!window.PointerEvent));
+  add('Share sheet', navigator.canShare ? 'PASS' : 'WARN',
+      'canShare=' + !!navigator.canShare + ' share=' + !!navigator.share);
+
+  section('Canvas pipeline');
+  var photo = null, blob = null;
+  try {
+    photo = syntheticPhoto(760, 540);
+    add('Canvas draw', 'PASS', '760x540, ' + photo._expected + ' synthetic ends');
+  } catch (e) { add('Canvas draw', 'FAIL', err(e)); }
+
+  try {
+    var g = photo.getContext('2d').getImageData(0, 0, 8, 8);
+    add('getImageData', g && g.data.length === 256 ? 'PASS' : 'FAIL', 'bytes=' + (g && g.data.length));
+  } catch (e) { add('getImageData', 'FAIL', err(e) + ' (canvas may be tainted)'); }
+
+  try {
+    var t0 = t();
+    blob = await timed(canvasToBlob(photo, 'image/jpeg', 0.9), 8000, 'toBlob');
+    add('canvas.toBlob', 'PASS', Math.round(blob.size / 1024) + ' KB in ' + Math.round(t() - t0) + 'ms');
+  } catch (e) { add('canvas.toBlob', 'FAIL', err(e)); }
+
+  section('Decode routes');
+  if (blob) {
+    var file = new File([blob], 'synthetic.jpg', { type: 'image/jpeg' });
+    if (typeof createImageBitmap === 'function') {
+      try {
+        var a0 = t();
+        var b1 = await timed(createImageBitmap(file, { imageOrientation: 'from-image' }), 6000, 'bitmap+orient');
+        add('createImageBitmap + orientation', 'PASS',
+            b1.width + 'x' + b1.height + ' in ' + Math.round(t() - a0) + 'ms');
+      } catch (e) { add('createImageBitmap + orientation', 'WARN', err(e)); }
+      try {
+        var a1 = t();
+        var b2 = await timed(createImageBitmap(file), 6000, 'bitmap');
+        add('createImageBitmap plain', 'PASS',
+            b2.width + 'x' + b2.height + ' in ' + Math.round(t() - a1) + 'ms');
+      } catch (e) { add('createImageBitmap plain', 'FAIL', err(e)); }
+    }
+    try {
+      var a2 = t();
+      var im = await timed(new Promise(function (res, rej) {
+        var u = URL.createObjectURL(file), i = new Image();
+        i.onload = function () { URL.revokeObjectURL(u); res(i); };
+        i.onerror = function () { URL.revokeObjectURL(u); rej(new Error('img decode failed')); };
+        i.src = u;
+      }), 8000, 'img element');
+      add('img element decode', 'PASS',
+          im.naturalWidth + 'x' + im.naturalHeight + ' in ' + Math.round(t() - a2) + 'ms');
+    } catch (e) { add('img element decode', 'FAIL', err(e)); }
+
+    if (typeof decode === 'function') {
+      try {
+        var a3 = t();
+        var norm = await timed(decode(file), 20000, 'app decode()');
+        add('app decode() end to end', 'PASS',
+            norm.width + 'x' + norm.height + ' in ' + Math.round(t() - a3) + 'ms');
+      } catch (e) { add('app decode() end to end', 'FAIL', err(e)); }
+    }
+  }
+
+  section('Detector & export');
+  if (photo && typeof detectEnds === 'function') {
+    try {
+      var d0 = t();
+      var found = detectEnds(photo);
+      var okCount = Math.abs(found.length - photo._expected) <= 4;
+      add('detectEnds on synthetic load', okCount ? 'PASS' : 'WARN',
+          'found ' + found.length + ' of ' + photo._expected +
+          ' in ' + Math.round(t() - d0) + 'ms');
+    } catch (e) { add('detectEnds on synthetic load', 'FAIL', err(e)); }
+  }
+  /* app.js declares its state with let, so it lives in the global lexical scope
+     and cannot be poked from here. Drive it the way the app does instead: load
+     a photo through loadFile, then export. */
+  if (blob && typeof loadFile === 'function' && typeof exportImage === 'function') {
+    try {
+      await timed(loadFile(new File([blob], 'synthetic.jpg', { type: 'image/jpeg' })),
+                  20000, 'loadFile');
+      var e0 = t();
+      var out = await timed(exportImage(), 15000, 'exportImage');
+      add('loadFile + exportImage', 'PASS',
+          Math.round(out.size / 1024) + ' KB in ' + Math.round(t() - e0) + 'ms');
+    } catch (e) { add('loadFile + exportImage', 'FAIL', err(e)); }
+  }
+
+  section('Regression: storage must never block the UI');
+  if (blob && typeof loadFile === 'function') {
+    var realIDB = null, swapped = false;
+    try {
+      realIDB = self.indexedDB;
+      Object.defineProperty(self, 'indexedDB', {
+        value: { open: function () { return {}; },       // never fires any event
+                 deleteDatabase: function () { return {}; } },
+        configurable: true, writable: true,
+      });
+      swapped = true;
+    } catch (e) { add('Could not simulate stalled storage', 'WARN', err(e)); }
+
+    if (swapped) {
+      try {
+        var w0 = t();
+        await timed(loadFile(new File([blob], 'stall.jpg', { type: 'image/jpeg' })),
+                    15000, 'loadFile with stalled storage');
+        var w1 = Math.round(t() - w0);
+        add('Opens a photo while storage is hung', w1 < 3000 ? 'PASS' : 'FAIL',
+            'returned in ' + w1 + 'ms (the original bug waited forever here)');
+        add('Spinner cleared afterwards',
+            document.getElementById('busy').hidden ? 'PASS' : 'FAIL',
+            'busy.hidden=' + document.getElementById('busy').hidden);
+      } catch (e) {
+        add('Opens a photo while storage is hung', 'FAIL', err(e));
+      }
+      try {
+        Object.defineProperty(self, 'indexedDB',
+          { value: realIDB, configurable: true, writable: true });
+      } catch (e) {}
+    }
+  }
+
+  section('IndexedDB round trip');
+  if (self.indexedDB && blob) {
+    try {
+      var db = await timed(new Promise(function (res, rej) {
+        var q = indexedDB.open('bamboo-selftest', 1);
+        q.onupgradeneeded = function () { q.result.createObjectStore('kv'); };
+        q.onsuccess = function () { res(q.result); };
+        q.onerror = function () { rej(q.error || new Error('open failed')); };
+        q.onblocked = function () { rej(new Error('open blocked')); };
+      }), 5000, 'idb open');
+      add('IndexedDB open', 'PASS', 'ok');
+      await timed(new Promise(function (res, rej) {
+        var tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put(blob, 'x');
+        tx.oncomplete = res; tx.onerror = function () { rej(tx.error); };
+        tx.onabort = function () { rej(tx.error || new Error('aborted')); };
+      }), 5000, 'idb write');
+      add('IndexedDB write', 'PASS', Math.round(blob.size / 1024) + ' KB stored');
+      db.close(); indexedDB.deleteDatabase('bamboo-selftest');
+    } catch (e) {
+      add('IndexedDB round trip', 'WARN', err(e) +
+          '  (app survives this — storage is fire-and-forget)');
+    }
+  }
+
+  add('Checks complete', 'PASS', results.filter(function (r) { return r.status === 'FAIL'; }).length +
+      ' failure(s), ' + results.filter(function (r) { return r.status === 'WARN'; }).length + ' warning(s)');
+  dump();
+}
+
+// ---------------------------------------------------------------- photo trace
+/* The one that matters: run the real pipeline against the real photo, one step
+   at a time, so a stall names the step it stalled in. */
+document.getElementById('pick').addEventListener('click', function () { this.value = ''; });
+document.getElementById('pick').addEventListener('change', async function (e) {
+  var f = e.target.files && e.target.files[0];
+  resEl.innerHTML = ''; results = [];
+  section('Photo trace');
+  if (!f) { add('Picker returned a file', 'FAIL', 'files list was empty'); return; }
+  add('Picker returned a file', 'PASS',
+      (f.name || 'unnamed') + ' · ' + (f.type || 'NO TYPE') + ' · ' +
+      Math.round((f.size || 0) / 1024) + ' KB · modified ' + (f.lastModified || '?'));
+
+  if (!f.type || f.type.indexOf('image/') !== 0) {
+    add('File is an image type', 'WARN', 'type is "' + f.type + '" — HEIC or an unrecognised format');
+  } else if (/heic|heif/i.test(f.type)) {
+    add('File is an image type', 'WARN', 'HEIC/HEIF — createImageBitmap usually refuses these');
+  } else {
+    add('File is an image type', 'PASS', f.type);
+  }
+
+  try {
+    var r0 = t();
+    var buf = await timed(f.slice(0, 64).arrayBuffer(), 6000, 'read first bytes');
+    var sig = Array.from(new Uint8Array(buf).slice(0, 12))
+      .map(function (b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+    var kind = sig.indexOf('ff d8 ff') === 0 ? 'JPEG'
+      : sig.indexOf('89 50 4e 47') === 0 ? 'PNG'
+      : sig.indexOf('66 74 79 70', 12) >= 0 || /66 74 79 70/.test(sig) ? 'HEIC/MP4-family'
+      : 'unrecognised';
+    add('File is readable', 'PASS', kind + ' — first bytes: ' + sig +
+        ' (' + Math.round(t() - r0) + 'ms)');
+  } catch (e) {
+    add('File is readable', 'FAIL', err(e) + '  — iOS revoked access to the picked asset');
+  }
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      var s0 = t();
+      var b = await timed(createImageBitmap(f, { imageOrientation: 'from-image' }), 6000, 'bitmap+orient');
+      add('Route 1: createImageBitmap + orientation', 'PASS',
+          b.width + 'x' + b.height + ' in ' + Math.round(t() - s0) + 'ms');
+    } catch (e) { add('Route 1: createImageBitmap + orientation', 'WARN', err(e)); }
+    try {
+      var s1 = t();
+      var b2 = await timed(createImageBitmap(f), 6000, 'bitmap');
+      add('Route 2: createImageBitmap plain', 'PASS',
+          b2.width + 'x' + b2.height + ' in ' + Math.round(t() - s1) + 'ms');
+    } catch (e) { add('Route 2: createImageBitmap plain', 'WARN', err(e)); }
+  }
+  try {
+    var s2 = t();
+    var im = await timed(new Promise(function (res, rej) {
+      var u = URL.createObjectURL(f), i = new Image();
+      i.onload = function () { URL.revokeObjectURL(u); res(i); };
+      i.onerror = function () { URL.revokeObjectURL(u); rej(new Error('img decode failed')); };
+      i.src = u;
+    }), 8000, 'img element');
+    add('Route 3: img element', 'PASS',
+        im.naturalWidth + 'x' + im.naturalHeight + ' in ' + Math.round(t() - s2) + 'ms');
+  } catch (e) { add('Route 3: img element', 'FAIL', err(e)); }
+
+  if (typeof decode === 'function') {
+    try {
+      var s3 = t();
+      var c = await timed(decode(f), 25000, 'app decode()');
+      add('App decode() end to end', 'PASS',
+          'working size ' + c.width + 'x' + c.height + ' in ' + Math.round(t() - s3) + 'ms');
+      if (typeof detectEnds === 'function') {
+        var s4 = t();
+        var found = detectEnds(c);
+        add('detectEnds on your photo', 'PASS',
+            found.length + ' ends in ' + Math.round(t() - s4) + 'ms');
+      }
+    } catch (e) { add('App decode() end to end', 'FAIL', err(e)); }
+  } else {
+    add('App decode() available', 'FAIL', 'app.js did not load — run the checks first');
+  }
+  add('Trace complete', 'PASS', '');
+  dump();
+});
+
+document.getElementById('run').addEventListener('click', function () {
+  runChecks().catch(function (e) { add('Test harness crashed', 'FAIL', err(e)); });
+});
+document.getElementById('copy').addEventListener('click', function () {
+  var ta = document.getElementById('out');
+  ta.select(); ta.setSelectionRange(0, 999999);
+  try { document.execCommand('copy'); } catch (e) {}
+  if (navigator.clipboard) navigator.clipboard.writeText(ta.value).catch(function () {});
+});
+
+runChecks().catch(function (e) { add('Test harness crashed', 'FAIL', err(e)); });
+</script>
+</body>
+</html>

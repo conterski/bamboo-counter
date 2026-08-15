@@ -539,13 +539,17 @@ async function loadFile(file) {
   }
 }
 
+/* Clear the input when the picker is opened, never after it returns. On iOS,
+   resetting value while the File is still being read can revoke access to the
+   underlying asset, and the read then stalls instead of failing. */
 function onPick(e) {
-  const f = e.target.files && e.target.files[0];
-  loadFile(f);
-  e.target.value = '';   // so re-picking the same photo fires change again
+  loadFile(e.target.files && e.target.files[0]);
 }
-$('file').addEventListener('change', onPick);
-$('file2').addEventListener('change', onPick);
+for (const id of ['file', 'file2']) {
+  const el = $(id);
+  el.addEventListener('click', () => { el.value = ''; });
+  el.addEventListener('change', onPick);
+}
 
 $('busycancel').addEventListener('click', () => { loadSeq++; busy(false); });
 $('errclose').addEventListener('click', () => { $('errbar').hidden = true; });
