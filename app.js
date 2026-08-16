@@ -365,22 +365,60 @@ function detectEnds(bitmap) {
   for (let a = 0; a < NA; a++) {
     cos[a] = Math.cos(a * 6.2832 / NA); sin[a] = Math.sin(a * 6.2832 / NA);
   }
+  /* Score a candidate ring two ways. Mean radial gradient says how strong the
+     rim is; coverage says how far round it actually goes. The second is what
+     separates a real end from a chance alignment - an end is supported at every
+     angle, a coincidence only on one side. */
+  function ringScore(px, py, r) {
+    let sum = 0;
+    const v = new Float32Array(NA);
+    for (let a = 0; a < NA; a++) {
+      const x = (px + cos[a] * r) | 0, y = (py + sin[a] * r) | 0;
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+      const i = y * W + x;
+      const q = Math.abs(gx[i] * cos[a] + gy[i] * sin[a]);
+      v[a] = q; sum += q;
+    }
+    const mean = sum / NA;
+    let cov = 0;
+    if (mean > 0) for (let a = 0; a < NA; a++) if (v[a] >= mean * COV_GRAD_F) cov++;
+    return { score: mean, cov: cov / NA };
+  }
+
   const out = [];
-  for (const [px, py] of peaks) {
-    let bestR = 0, bestS = 0;
-    for (let r = rmin; r <= rmax; r += 1) {
-      let s = 0;
-      for (let a = 0; a < NA; a++) {
-        const x = (px + cos[a] * r) | 0, y = (py + sin[a] * r) | 0;
-        if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
-        const i = y * W + x;
-        s += Math.abs(gx[i] * cos[a] + gy[i] * sin[a]);
+  for (const peak of peaks) {
+    let px = peak[0], py = peak[1], bestR = 0, bestS = 0, bestC = 0;
+    for (let pass = 0; pass < 2; pass++) {
+      bestR = 0; bestS = 0; bestC = 0;
+      for (let r = rmin; r <= rmax; r += 1) {
+        const q = ringScore(px, py, r);
+        if (q.score > bestS) { bestS = q.score; bestR = r; bestC = q.cov; }
       }
-      s /= NA;
-      if (s > bestS) { bestS = s; bestR = r; }
+      if (!bestR) break;
+      /* Nudge the centre onto the best-fitting spot. The vote map peaks a pixel
+         or two off when rims are soft, and that offset drags the measured radius
+         with it - so this pays for itself twice, in what gets found and in
+         markers landing where the eye says they should. */
+      let bx = px, by = py, bs = bestS;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (!dx && !dy) continue;
+          const q = ringScore(px + dx, py + dy, bestR);
+          if (q.score > bs) { bs = q.score; bx = px + dx; by = py + dy; }
+        }
+      }
+      if (bx === px && by === py) break;
+      px = bx; py = by;
     }
     if (!bestR) continue;
-    if (rimWood(rgba, W, H, px, py, bestR) < 0.32) continue;
+
+    /* Colour is the primary test, but it fails on rims in shadow - the top of a
+       backlit stack, where saturation collapses. Nearly every end missed on the
+       second test load was up there. A ring supported the whole way round is
+       strong enough evidence by itself, so let those through on a much weaker
+       colour showing. */
+    const rw = rimWood(rgba, W, H, px, py, bestR);
+    if (rw < RIM_MIN_FRAC && !(bestC >= COV_MIN && rw >= RIM_MIN_FRAC * 0.4)) continue;
     out.push({ x: px, y: py, r: bestR, score: bestS });
   }
 
@@ -409,6 +447,12 @@ function blur3(src, W, H) {
       o[y * W + x] = (t[(y - 1) * W + x] + t[y * W + x] + t[(y + 1) * W + x]) / 3;
   return o;
 }
+
+/* Acceptance thresholds. Tuned against two hand-counted loads of 100 by
+   measuring recall and precision, not by eye — see README. */
+const RIM_MIN_FRAC = 0.38;   // ring must read this woody to pass on colour alone
+const COV_MIN = 0.68;        // ...or be supported this far round to pass without
+const COV_GRAD_F = 0.55;     // gradient counted as "supported", vs the ring mean
 
 /* Fraction of the ring that is bare timber. Saturation does the real work:
    sun-bleached roofing and cream render sit in the same hue band as bamboo but

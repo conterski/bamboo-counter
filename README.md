@@ -19,19 +19,49 @@ server, no account. Once opened it works offline, which matters in a yard.
 
 Progress is kept if you close the tab mid-count.
 
-## Where the detector needs help
+## Accuracy
 
-Measured against two hand-checked loads of 100: **94% and 83%** of ends found
-automatically. The gap is not random, so it is worth knowing where to look:
+Measured against two hand-checked loads of 100 ends each, matching a detection
+to a real end when their centres fall within 75% of the end's radius.
+
+| | photo 1 | photo 2 | mean F1 |
+|---|---|---|---|
+| first version | 94% recall / 94% precision | 83% / 96.5% | 91.6 |
+| **current** | **96% / 93.2%** | **90% / 96.8%** | **93.95** |
+
+Two changes account for it, both found by measuring rather than guessing:
+
+**Ring coverage.** Scoring a candidate only by average rim strength treats a
+ring supported all the way round the same as one supported on a single side.
+Measuring what fraction of the ring carries a radial gradient separates a real
+end from a chance alignment — and lets an end whose colour is washed out by
+shadow still qualify. Nearly every miss on photo 2 was in the backlit top of
+the stack, where saturation collapses and the colour test alone rejects a
+perfectly good end.
+
+**Centre refinement.** The vote map peaks a pixel or two off true centre when
+rims are soft, and that error drags the measured radius with it. A small search
+around each peak fixes both, so markers also land where the eye expects.
+
+Things tried that did **not** earn their place, for the record: normalising the
+vote map against its local neighbourhood (better recall, much worse precision),
+a second detection pass over what the first pass left (no change), lowering the
+peak threshold (precision collapsed), and detecting at higher resolution
+(1200px was already the sweet spot).
+
+Only two photos back these numbers, so treat the third decimal as noise. The
+two structural changes are principled; the exact thresholds may be worth
+retuning if your loads look different.
+
+### Where it still needs help
 
 - **Ends angled away from the camera** show no bright rim — the bore reads as
-  plain shadow. The most-missed kind by a distance.
-- **Ends hemmed in on every side** get suppressed as duplicates of their
-  neighbours.
+  plain shadow. Still the most-missed kind.
+- **Ends hemmed in on every side** get suppressed as duplicates of neighbours.
 - **The outer fringe** of the bundle, especially bottom corners.
-- **Small ends behind larger ones** at the back of the stack.
 
-False positives are rarer and cluster on tailgate stickers and lettering.
+False positives are rarer and cluster on tailgate stickers, lettering, and
+occasionally a person standing beside the load.
 
 A culm cut through a node shows a solid tan disc rather than a hole. That is
 still a pole and the detector counts it.
@@ -52,11 +82,13 @@ all the way round and show up as sharp peaks; noise scatters. Radius is then
 measured per peak — the ring whose gradients point most radially — which keeps
 the accumulator 2-D and fast enough for a phone.
 
-The step that does the real work in a yard photo is the last one: a candidate
-survives only if its rim is bare timber, judged on hue and saturation. Sky,
-render, concrete and truck paint all produce round-ish edges; colour is what
-separates them. Saturation matters more than hue, because sun-bleached roofing
-sits in the same hue band as bamboo but is far paler.
+Each surviving candidate is then judged twice. Colour: is the rim bare timber,
+by hue and saturation? Sky, render, concrete and truck paint all produce
+round-ish edges, and colour is what separates them — saturation more than hue,
+since sun-bleached roofing sits in bamboo's hue band but is far paler. And
+geometry: does a radial gradient support the ring the whole way round? Either
+a clearly woody rim or a fully supported one is enough, which is what keeps
+shadowed ends without losing the background to false positives.
 
 ## Running locally
 

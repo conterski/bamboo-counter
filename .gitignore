@@ -1,4 +1,7 @@
 t1.jpg
 t2.jpg
+truth1.json
+truth2.json
+dev-detector.js
 *.tmp
 .DS_Store
