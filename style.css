@@ -4,6 +4,12 @@
   --bar: calc(58px + env(safe-area-inset-bottom));
 }
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+
+/* The hidden attribute only works through the UA rule [hidden]{display:none},
+   and any author rule setting display beats the UA stylesheet outright. Every
+   panel below is laid out with display:flex, so without this they are all
+   permanently on screen no matter what the JS sets .hidden to. */
+[hidden]{display:none !important}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
   font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   overscroll-behavior:none; touch-action:none;}

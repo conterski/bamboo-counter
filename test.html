@@ -215,6 +215,58 @@ async function runChecks() {
   add('Share sheet', navigator.canShare ? 'PASS' : 'WARN',
       'canShare=' + !!navigator.canShare + ' share=' + !!navigator.share);
 
+  /* The bug that broke the app for days: every panel is laid out with
+     display:flex, and an author display rule beats the UA [hidden] rule, so
+     .hidden = true changed nothing and the sheet sat over the whole screen
+     swallowing taps. Checking the property is not enough - the only honest
+     test is what the browser actually computes, and what a tap actually hits. */
+  section('UI visibility (in a live copy of the app)');
+  await new Promise(function (res) {
+    var f = document.createElement('iframe');
+    f.src = './?uitest=1';
+    f.style.cssText = 'position:fixed;left:-9999px;top:0;width:390px;height:780px;border:0';
+    f.onload = function () {
+      try {
+        var w = f.contentWindow, d = f.contentDocument;
+        var panels = ['busy', 'sheet', 'bar', 'hud', 'errbar', 'toast'];
+        var bad = [];
+        panels.forEach(function (id) {
+          var el = d.getElementById(id);
+          if (!el) { bad.push(id + ' missing'); return; }
+          var disp = w.getComputedStyle(el).display;
+          if (el.hasAttribute('hidden') && disp !== 'none') bad.push(id + ' hidden but display:' + disp);
+        });
+        add('Panels marked hidden are really hidden', bad.length ? 'FAIL' : 'PASS',
+            bad.length ? bad.join('; ') : panels.join(', ') + ' all correct');
+
+        var lab = d.querySelector('label[for="file"]');
+        var r = lab.getBoundingClientRect();
+        var hit = d.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        var reachable = hit && (hit === lab || lab.contains(hit));
+        add('"Choose photo" is tappable', reachable ? 'PASS' : 'FAIL',
+            reachable ? 'tap lands on the button'
+                      : 'tap lands on ' + (hit ? hit.tagName + '#' + hit.id : 'nothing') +
+                        ' — something is covering it');
+
+        // and the toggles must actually move things on screen
+        var sheet = d.getElementById('sheet');
+        sheet.hidden = false;
+        var shown = w.getComputedStyle(sheet).display !== 'none';
+        sheet.hidden = true;
+        var gone = w.getComputedStyle(sheet).display === 'none';
+        add('Sheet opens and closes', (shown && gone) ? 'PASS' : 'FAIL',
+            'opens=' + shown + ' closes=' + gone);
+      } catch (e) {
+        add('UI visibility harness', 'FAIL', err(e));
+      }
+      f.remove();
+      res();
+    };
+    f.onerror = function () { add('UI visibility harness', 'FAIL', 'iframe failed'); res(); };
+    document.body.appendChild(f);
+    setTimeout(function () { res(); }, 8000);
+  });
+
   section('Canvas pipeline');
   var photo = null, blob = null;
   try {
