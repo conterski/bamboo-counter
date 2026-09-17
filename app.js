@@ -24,9 +24,11 @@ const clone = a => a.map(p => ({ x: p.x, y: p.y, r: p.r }));
 const push = () => { undoStack.push(clone(pts)); if (undoStack.length > 60) undoStack.shift(); };
 
 // ---------------------------------------------------------------- ordering
-/* Number top-to-bottom in bands, left-to-right inside a band, so the numbers
-   travel across the photo the way somebody's eye does. Band height follows the
-   typical end so it adapts to how far away the load was shot from. */
+/* Only a freshly detected batch is ordered here: top-to-bottom in bands,
+   left-to-right inside a band, so the numbers travel across the photo the way
+   somebody's eye does. Band height follows the typical end so it adapts to how
+   far away the load was shot from. Ends the user taps are never re-sorted; they
+   keep the order they were tapped in. */
 function renumber() {
   if (!pts.length) return;
   const rs = pts.map(p => p.r).sort((a, b) => a - b);
@@ -254,7 +256,7 @@ function tap(px, py) {
     pts.push({ x: p.x, y: p.y, r: typicalR() });
     if (navigator.vibrate) navigator.vibrate(8);
   }
-  renumber(); draw(); persist();
+  draw(); persist();
 }
 
 // ---------------------------------------------------------------- detector
@@ -618,7 +620,7 @@ $('detect').addEventListener('click', async () => {
 $('undo').addEventListener('click', () => {
   if (!undoStack.length) { toast('Nothing to undo'); return; }
   pts = undoStack.pop();
-  renumber(); draw(); persist();
+  draw(); persist();
 });
 
 $('fit').addEventListener('click', fit);
