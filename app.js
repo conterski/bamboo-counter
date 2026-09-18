@@ -690,6 +690,16 @@ $('undo').addEventListener('click', () => {
   draw(); persist();
 });
 
+/* No confirmation dialog: undo already covers a mis-tap, and a dialog on a
+   yard phone is one more thing to hit with a glove on. */
+$('clear').addEventListener('click', () => {
+  if (!pts.length && !unsure.length) { toast('Nothing to clear'); return; }
+  push();
+  pts = []; unsure = [];
+  draw(); persist();
+  hint('Cleared. Undo brings them back.');
+});
+
 $('fit').addEventListener('click', fit);
 
 $('expect').addEventListener('click', () => {
