@@ -9,12 +9,18 @@ server, no account. Once opened it works offline, which matters in a yard.
 
 ## Using it
 
-1. **Choose photo** — take it square-on to the cut ends, filling the frame.
+1. **Choose photo** — take it square-on to the cut ends, filling the frame,
+   with the flash on. Every hard case for the detector is a lighting case:
+   the backlit top of a stack, an end angled away whose rim catches no light.
+   A flash from the camera axis lights rims and bores evenly.
 2. **Detect** — finds most of the ends in about a third of a second.
 3. **Fix the rest** — pinch to zoom, tap a bare end to add it, tap a number to
    remove it. Undo covers misfires.
 4. **Expected** — enter the docket quantity and the badge shows the difference
-   as you work.
+   as you work. Set it before Detect and, when Detect falls short of it, the
+   next best candidates are shown as blue rings: tap one to count it, or leave
+   it. They are never counted on their own — reaching the docket by itself
+   would defeat the check.
 5. **Save** — writes a numbered JPEG you can attach to a goods-receipt.
 
 Progress is kept if you close the tab mid-count.
@@ -53,6 +59,30 @@ Only two photos back these numbers, so treat the third decimal as noise. The
 two structural changes are principled; the exact thresholds may be worth
 retuning if your loads look different.
 
+### Not yet measured
+
+Three later detector changes have been checked on synthetic loads but not
+scored against the hand-counted photos, so they carry no number yet:
+
+- **Dark bore.** A third way past the colour test, for the end angled away
+  from the camera: no bright rim, but a clearly dark bore with some timber
+  round it. Never required, since a culm cut through a node is a solid disc.
+- **One size per load.** Ends in a photo share a radius; stickers, lettering
+  and a bystander's head do not. Candidates far from the typical size are
+  dropped once there are enough accepted ends to know what typical is.
+- **Packing pass.** Ends sit roughly hexagonally, so the spot where a third
+  end would touch two found neighbours gets fitted like any other candidate
+  even though the vote map never nominated it - hemmed in on every side, its
+  rim votes drown in its neighbours'. Only spots implied from two sides are
+  tried, at the neighbours' size, and the bar is a fully supported ring at
+  least a fraction as strong as the ends already kept. On a synthetic
+  rim-to-rim load it turned 7 misses in 48 into 1 and filled no true gap.
+
+To score them properly the app now keeps a count log: each saved count
+records what Detect found next to what the count ended as, in image pixels,
+and the self-test page's "Copy results" hands it back. Every corrected count
+is a labelled photo, and labelled photos are what the detector is short of.
+
 ### Where it still needs help
 
 - **Ends angled away from the camera** show no bright rim — the bore reads as
@@ -82,13 +112,16 @@ all the way round and show up as sharp peaks; noise scatters. Radius is then
 measured per peak — the ring whose gradients point most radially — which keeps
 the accumulator 2-D and fast enough for a phone.
 
-Each surviving candidate is then judged twice. Colour: is the rim bare timber,
-by hue and saturation? Sky, render, concrete and truck paint all produce
-round-ish edges, and colour is what separates them — saturation more than hue,
-since sun-bleached roofing sits in bamboo's hue band but is far paler. And
-geometry: does a radial gradient support the ring the whole way round? Either
-a clearly woody rim or a fully supported one is enough, which is what keeps
-shadowed ends without losing the background to false positives.
+Each surviving candidate is then judged three ways. Colour: is the rim bare
+timber, by hue and saturation? Sky, render, concrete and truck paint all
+produce round-ish edges, and colour is what separates them — saturation more
+than hue, since sun-bleached roofing sits in bamboo's hue band but is far
+paler. Geometry: does a radial gradient support the ring the whole way round?
+And depth: is the bore clearly darker than the rim? A clearly woody rim, a
+fully supported ring, or a dark bore with a little timber round it is enough,
+which is what keeps shadowed and angled ends without losing the background to
+false positives. Survivors are held to one size per load, and gaps that the
+packing implies are fitted last.
 
 ## Running locally
 

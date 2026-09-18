@@ -112,6 +112,9 @@ function dump() {
     return '[' + r.status + '] ' + r.name + (r.detail ? '  — ' + r.detail : '');
   });
   if (boot.length) lines.push('', 'BOOT LOG:', boot.join('\n'));
+  var log = null;
+  try { log = localStorage.getItem('bc-log'); } catch (e) {}
+  if (log) lines.push('', 'COUNT LOG (what detect found vs the finished count, image px):', log);
   document.getElementById('out').value = lines.join('\n');
 }
 function err(e) {
@@ -328,7 +331,7 @@ async function runChecks() {
   if (photo && typeof detectEnds === 'function') {
     try {
       var d0 = t();
-      var found = detectEnds(photo);
+      var found = detectEnds(photo).ends;
       var okCount = Math.abs(found.length - photo._expected) <= 4;
       add('detectEnds on synthetic load', okCount ? 'PASS' : 'WARN',
           'found ' + found.length + ' of ' + photo._expected +
@@ -485,7 +488,7 @@ document.getElementById('pick').addEventListener('change', async function (e) {
         var s4 = t();
         var found = detectEnds(c);
         add('detectEnds on your photo', 'PASS',
-            found.length + ' ends in ' + Math.round(t() - s4) + 'ms');
+            found.ends.length + ' ends, ' + found.unsure.length + ' unsure, in ' + Math.round(t() - s4) + 'ms');
       }
     } catch (e) { add('App decode() end to end', 'FAIL', err(e)); }
   } else {

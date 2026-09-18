@@ -15,13 +15,21 @@ const els = {
 // ---------------------------------------------------------------- state
 let img = null;                 // ImageBitmap
 let pts = [];                   // {x,y,r} in image pixels
+let unsure = [];                // offered by detect, not counted until tapped
+let detected = null;            // what detect found, before any correction
 let undoStack = [];
 let view = { s: 1, tx: 0, ty: 0 };
 let expected = null;
 let dpr = Math.min(devicePixelRatio || 1, 2.5);
 
 const clone = a => a.map(p => ({ x: p.x, y: p.y, r: p.r }));
-const push = () => { undoStack.push(clone(pts)); if (undoStack.length > 60) undoStack.shift(); };
+const push = () => {
+  undoStack.push({ pts: clone(pts), unsure: clone(unsure) });
+  if (undoStack.length > 60) undoStack.shift();
+};
+const median = (a, f) => { const v = a.map(f).sort((x, y) => x - y); return v[v.length >> 1]; };
+const medianR = a => median(a, p => p.r);
+const buzz = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
 // ---------------------------------------------------------------- ordering
 /* Only a freshly detected batch is ordered here: top-to-bottom in bands,
@@ -31,15 +39,11 @@ const push = () => { undoStack.push(clone(pts)); if (undoStack.length > 60) undo
    keep the order they were tapped in. */
 function renumber() {
   if (!pts.length) return;
-  const rs = pts.map(p => p.r).sort((a, b) => a - b);
-  const band = Math.max(rs[rs.length >> 1] * 1.55, 8);
+  const band = Math.max(medianR(pts) * 1.55, 8);
   pts.sort((a, b) => (Math.floor(a.y / band) - Math.floor(b.y / band)) || (a.x - b.x));
 }
-const typicalR = () => {
-  if (!pts.length) return img ? Math.max(8, Math.min(img.width, img.height) * 0.028) : 20;
-  const rs = pts.map(p => p.r).sort((a, b) => a - b);
-  return rs[rs.length >> 1];
-};
+const typicalR = () => pts.length ? medianR(pts)
+  : (img ? Math.max(8, Math.min(img.width, img.height) * 0.028) : 20);
 
 // ---------------------------------------------------------------- view
 function fit() {
@@ -79,23 +83,24 @@ function draw() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  for (let i = 0; i < pts.length; i++) {
-    const p = pts[i];
+  const all = pts.concat(unsure);
+  for (let i = 0; i < all.length; i++) {
+    const p = all[i], sure = i < pts.length, label = sure ? i + 1 : '?';
     const x = p.x * view.s + view.tx, y = p.y * view.s + view.ty, r = p.r * view.s;
     if (x < -r - 40 || y < -r - 40 || x > w + r + 40 || y > h + r + 40) continue;
 
     ctx.beginPath();
     ctx.arc(x, y, Math.max(r * 0.92, 5), 0, 6.2832);
-    ctx.strokeStyle = 'rgba(255,60,60,.95)';
+    ctx.strokeStyle = sure ? 'rgba(255,60,60,.95)' : 'rgba(70,160,255,.95)';
     ctx.stroke();
 
     const fs = Math.max(9, Math.min(r * 0.85, 30));
     ctx.font = `700 ${fs}px -apple-system,system-ui,sans-serif`;
     ctx.lineWidth = Math.max(2, fs * 0.28);
     ctx.strokeStyle = 'rgba(0,0,0,.85)';
-    ctx.strokeText(i + 1, x, y);
-    ctx.fillStyle = '#ffd21e';
-    ctx.fillText(i + 1, x, y);
+    ctx.strokeText(label, x, y);
+    ctx.fillStyle = sure ? '#ffd21e' : '#8fd0ff';
+    ctx.fillText(label, x, y);
     ctx.lineWidth = lw;
   }
   updateCount();
@@ -237,25 +242,26 @@ cv.addEventListener('wheel', e => {
   draw();
 }, { passive: false });
 
-/* A tap on an existing marker removes it, a tap on bare photo adds one. That is
-   the whole editing model - it matches how you would tick ends off with a
-   finger, and undo covers the misfires. */
-function tap(px, py) {
-  const p = toImg(px, py);
+function nearest(list, p) {
   let hit = -1, best = 1e9;
-  for (let i = 0; i < pts.length; i++) {
-    const d = Math.hypot(pts[i].x - p.x, pts[i].y - p.y);
-    const tol = Math.max(pts[i].r, 14 / view.s);
+  for (let i = 0; i < list.length; i++) {
+    const d = Math.hypot(list[i].x - p.x, list[i].y - p.y);
+    const tol = Math.max(list[i].r, 14 / view.s);
     if (d < tol && d < best) { best = d; hit = i; }
   }
+  return hit;
+}
+
+/* A tap on an existing marker removes it, a tap on an unsure ring counts it,
+   a tap on bare photo adds one. That is the whole editing model - it matches
+   how you would tick ends off with a finger, and undo covers the misfires. */
+function tap(px, py) {
+  const p = toImg(px, py);
+  const hit = nearest(pts, p), maybe = hit < 0 ? nearest(unsure, p) : -1;
   push();
-  if (hit >= 0) {
-    pts.splice(hit, 1);
-    if (navigator.vibrate) navigator.vibrate(12);
-  } else {
-    pts.push({ x: p.x, y: p.y, r: typicalR() });
-    if (navigator.vibrate) navigator.vibrate(8);
-  }
+  if (hit >= 0) { pts.splice(hit, 1); buzz(12); }
+  else if (maybe >= 0) { pts.push(...unsure.splice(maybe, 1)); buzz(8); }
+  else { pts.push({ x: p.x, y: p.y, r: typicalR() }); buzz(8); }
   draw(); persist();
 }
 
@@ -288,7 +294,7 @@ function detectEnds(bitmap) {
   // grayscale + light blur
   const g0 = new Float32Array(W * H);
   for (let i = 0, p = 0; i < g0.length; i++, p += 4)
-    g0[i] = 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+    g0[i] = lum(rgba[p], rgba[p + 1], rgba[p + 2]);
   const g = blur3(blur3(g0, W, H), W, H);
 
   // sobel
@@ -387,20 +393,20 @@ function detectEnds(bitmap) {
     return { score: mean, cov: cov / NA };
   }
 
-  const out = [];
-  for (const peak of peaks) {
-    let px = peak[0], py = peak[1], bestR = 0, bestS = 0, bestC = 0;
+  /* Fit a nominated centre: the radius whose ring is best supported, then a
+     nudge onto the best-fitting spot. The vote map peaks a pixel or two off
+     when rims are soft, and that offset drags the measured radius with it - so
+     the nudge pays for itself twice, in what gets found and in markers landing
+     where the eye says they should. */
+  function fitRing(px, py, lo = rmin, hi = rmax) {
+    let bestR = 0, bestS = 0, bestC = 0;
     for (let pass = 0; pass < 2; pass++) {
       bestR = 0; bestS = 0; bestC = 0;
-      for (let r = rmin; r <= rmax; r += 1) {
+      for (let r = lo; r <= hi; r += 1) {
         const q = ringScore(px, py, r);
         if (q.score > bestS) { bestS = q.score; bestR = r; bestC = q.cov; }
       }
-      if (!bestR) break;
-      /* Nudge the centre onto the best-fitting spot. The vote map peaks a pixel
-         or two off when rims are soft, and that offset drags the measured radius
-         with it - so this pays for itself twice, in what gets found and in
-         markers landing where the eye says they should. */
+      if (!bestR) return null;
       let bx = px, by = py, bs = bestS;
       for (let dy = -2; dy <= 2; dy++) {
         for (let dx = -2; dx <= 2; dx++) {
@@ -412,31 +418,79 @@ function detectEnds(bitmap) {
       if (bx === px && by === py) break;
       px = bx; py = by;
     }
-    if (!bestR) continue;
-
-    /* Colour is the primary test, but it fails on rims in shadow - the top of a
-       backlit stack, where saturation collapses. Nearly every end missed on the
-       second test load was up there. A ring supported the whole way round is
-       strong enough evidence by itself, so let those through on a much weaker
-       colour showing. */
-    const rw = rimWood(rgba, W, H, px, py, bestR);
-    if (rw < RIM_MIN_FRAC && !(bestC >= COV_MIN && rw >= RIM_MIN_FRAC * 0.4)) continue;
-    out.push({ x: px, y: py, r: bestR, score: bestS });
+    const rim = rimAndBore(rgba, W, H, px, py, bestR);
+    return { x: px, y: py, r: bestR, score: bestS, cov: bestC, wood: rim.wood, dark: rim.dark };
   }
+
+  /* Three ways in. Colour is the primary test, but it fails on rims in shadow -
+     the top of a backlit stack, where saturation collapses; nearly every end
+     missed on the second test load was up there. A ring supported the whole
+     way round is strong enough evidence by itself, so those pass on a much
+     weaker colour showing. And an end angled away from the camera shows no
+     bright rim at all, only a dark bore with timber round it, so a clearly
+     dark bore lets a weak colour showing through as well. */
+  const accept = c => c.wood >= RIM_MIN_FRAC
+    || (c.cov >= COV_MIN && c.wood >= RIM_MIN_FRAC * 0.4)
+    || (c.dark >= BORE_DARK_MIN && c.wood >= RIM_MIN_FRAC * 0.5);
+
+  const ends = [], rest = [];
+  for (const [x, y] of peaks) {
+    const c = fitRing(x, y);
+    if (c) (accept(c) ? ends : rest).push(c);
+  }
+
+  /* Ends in one load share a size; stickers, lettering and a bystander's head
+     do not. Judged against the accepted ends once there are enough of them to
+     have a typical size at all. */
+  const rm = ends.length >= 5 ? medianR(ends) : 0;
+  const sized = c => !rm || (c.r > rm * 0.5 && c.r < rm * 1.8);
+  const clash = (c, list) =>
+    list.some(k => (c.x - k.x) ** 2 + (c.y - k.y) ** 2 < (0.55 * (c.r + k.r)) ** 2);
 
   // suppress overlaps, strongest first. Kept mild on purpose: ends really do
   // sit rim to rim, and an aggressive rule deletes the one hemmed in on every
   // side, which is exactly the miss nobody spots afterwards.
-  out.sort((a, b) => b.score - a.score);
   const keep = [];
-  for (const c of out) {
-    let ok = true;
-    for (const k of keep) {
-      if ((c.x - k.x) ** 2 + (c.y - k.y) ** 2 < (0.55 * (c.r + k.r)) ** 2) { ok = false; break; }
-    }
-    if (ok) keep.push(c);
+  for (const c of ends.sort((a, b) => b.score - a.score)) {
+    if (sized(c) && !clash(c, keep)) keep.push(c);
   }
-  return keep.map(c => ({ x: c.x / sc, y: c.y / sc, r: c.r / sc }));
+
+  /* Packing prior. Ends sit roughly hexagonally, so the spot where a third end
+     would touch two kept neighbours is worth a look even though the vote map
+     never nominated it - hemmed in on every side, its rim votes drown in its
+     neighbours'. Only spots nominated from two different pairs (three or more
+     neighbours) are tried, the radius search is held near the neighbours'
+     size, and the evidence bar is the fully supported one plus a rim at least
+     a fraction as strong as the ends already kept - coverage is relative to
+     the ring's own mean, and at an empty gap noise alone can fill it - so
+     nothing gets in on geometry alone. */
+  const dim = keep.length ? median(keep, c => c.score) * 0.15 : 0;
+  const spots = [];
+  for (let i = 0; i < keep.length; i++) {
+    for (let j = i + 1; j < keep.length; j++) {
+      const a = keep[i], b = keep[j], s = a.r + b.r;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      if (dx * dx + dy * dy > (s * 1.5) ** 2) continue;   // fit may sit on the bore edge, so allow up to ~3r
+      for (const g of [1, -1]) {
+        spots.push({ x: (a.x + b.x) / 2 - g * dy * 0.866, y: (a.y + b.y) / 2 + g * dx * 0.866, r: s / 2 });
+      }
+    }
+  }
+  spots.forEach((n, i) => {
+    if (clash(n, keep)) return;
+    if (!spots.some((m, j) => j !== i && (m.x - n.x) ** 2 + (m.y - n.y) ** 2 < (n.r * 0.4) ** 2)) return;
+    const c = fitRing(n.x | 0, n.y | 0, n.r * 0.75, n.r * 1.25);
+    if (c && c.score >= dim && c.cov >= COV_MIN && accept(c) && sized(c) && !clash(c, keep)) keep.push(c);
+  });
+
+  /* What did not make it, best-supported first, for the docket check to offer
+     as unsure when the count falls short. Same size and spacing rules. */
+  const maybe = [];
+  for (const c of rest.sort((a, b) => (b.cov + b.wood) - (a.cov + a.wood))) {
+    if (sized(c) && !clash(c, keep) && !clash(c, maybe)) maybe.push(c);
+  }
+  const toImage = c => ({ x: c.x / sc, y: c.y / sc, r: c.r / sc });
+  return { ends: keep.map(toImage), unsure: maybe.map(toImage) };
 }
 
 function blur3(src, W, H) {
@@ -455,24 +509,31 @@ function blur3(src, W, H) {
 const RIM_MIN_FRAC = 0.38;   // ring must read this woody to pass on colour alone
 const COV_MIN = 0.68;        // ...or be supported this far round to pass without
 const COV_GRAD_F = 0.55;     // gradient counted as "supported", vs the ring mean
+const BORE_DARK_MIN = 0.45;  // bore this much darker than its rim reads as a hole
 
-/* Fraction of the ring that is bare timber. Saturation does the real work:
-   sun-bleached roofing and cream render sit in the same hue band as bamboo but
-   are far paler. Works on shadowed ends too, because it reads the rim and not
-   the bore. */
-function rimWood(rgba, W, H, cx, cy, r) {
-  const N = 48; let hit = 0, seen = 0;
+const lum = (R, G, B) => 0.299 * R + 0.587 * G + 0.114 * B;
+
+/* Colour and depth of a candidate. wood: fraction of the rim that is bare
+   timber - saturation does the real work, since sun-bleached roofing and cream
+   render sit in bamboo's hue band but are far paler; it reads the rim and not
+   the bore, so shadowed ends still qualify. dark: how much darker the bore is
+   than the rim, which an end angled away from the camera still shows when its
+   rim catches no light. A culm cut through a node is a solid disc, so dark is
+   never required, only allowed to help. */
+function rimAndBore(rgba, W, H, cx, cy, r) {
+  const N = 48; let hit = 0, seen = 0, rim = 0, bore = 0, nb = 0;
   for (let a = 0; a < N; a++) {
     const th = a * 6.2832 / N;
-    for (const k of [0.86, 0.98]) {
+    for (const k of [0.35, 0.86, 0.98]) {
       const x = (cx + Math.cos(th) * r * k) | 0, y = (cy + Math.sin(th) * r * k) | 0;
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
-      const p = (y * W + x) * 4;
-      seen++;
+      const p = (y * W + x) * 4, L = lum(rgba[p], rgba[p + 1], rgba[p + 2]);
+      if (k < 0.5) { bore += L; nb++; continue; }
+      seen++; rim += L;
       if (isWood(rgba[p], rgba[p + 1], rgba[p + 2])) hit++;
     }
   }
-  return seen ? hit / seen : 0;
+  return { wood: seen ? hit / seen : 0, dark: nb && rim > 0 ? 1 - (bore / nb) / (rim / seen) : 0 };
 }
 
 function isWood(R, G, B) {
@@ -571,7 +632,7 @@ async function loadFile(file) {
     const c = await decode(file);
     if (mine !== loadSeq) return;          // a newer pick superseded this one
     img = c;
-    pts = []; undoStack = [];
+    pts = []; unsure = []; detected = null; undoStack = [];
     els.empty.hidden = true; els.hud.hidden = false; els.bar.hidden = false;
     resize(); fit();
     persist();
@@ -605,11 +666,17 @@ $('detect').addEventListener('click', async () => {
   busy(true, 'Finding ends…');
   await new Promise(r => setTimeout(r, 30));   // let the spinner paint
   try {
-    const found = detectEnds(img);
+    const { ends, unsure: rest } = detectEnds(img);
     push();
-    pts = found;
-    renumber(); draw(); persist();
-    hint(`Found ${found.length}. Now check the edges and any tight gaps.`);
+    pts = ends; renumber(); detected = clone(pts);
+    /* The docket count is a prior worth using: when detect falls short of it,
+       show the next best candidates in blue for a tap to confirm. Never counted
+       until tapped - reaching the docket by itself would defeat the check. */
+    unsure = expected > ends.length ? rest.slice(0, expected - ends.length) : [];
+    draw(); persist();
+    hint(unsure.length
+      ? `Found ${ends.length} of ${expected}. Blue rings are unsure — tap one to count it.`
+      : `Found ${ends.length}. Now check the edges and any tight gaps.`);
   } catch (err) {
     toast('Detection failed — tap the ends instead. (' + ((err && err.message) || err) + ')');
   } finally {
@@ -619,7 +686,7 @@ $('detect').addEventListener('click', async () => {
 
 $('undo').addEventListener('click', () => {
   if (!undoStack.length) { toast('Nothing to undo'); return; }
-  pts = undoStack.pop();
+  ({ pts, unsure } = undoStack.pop());
   draw(); persist();
 });
 
@@ -646,6 +713,7 @@ $('save').addEventListener('click', async () => {
   busy(true, 'Building image…');
   try {
     const blob = await exportImage();
+    logCount();
     busy(false);
     const file = new File([blob], `bamboo-${pts.length}.jpg`, { type: 'image/jpeg' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -739,7 +807,17 @@ function storeImage(blob) {
 }
 function persist() {
   try {
-    localStorage.setItem('bc-state', JSON.stringify({ pts, expected }));
+    localStorage.setItem('bc-state', JSON.stringify({ pts, unsure, detected, expected }));
+  } catch {}
+}
+/* Every corrected count is a labelled photo, and labelled photos are what the
+   detector is short of. Keep what detect found next to what the count ended as
+   (image pixels), for the self-test page to hand back. */
+function logCount() {
+  try {
+    const log = JSON.parse(localStorage.getItem('bc-log') || '[]');
+    log.push({ t: new Date().toISOString(), w: img.width, h: img.height, expected, detected, final: pts });
+    localStorage.setItem('bc-log', JSON.stringify(log.slice(-40)));
   } catch {}
 }
 async function restore() {
@@ -751,7 +829,8 @@ async function restore() {
   if (img) return;                 // a fresh pick already won the race
   try {
     img = await decode(blob);
-    pts = (saved && Array.isArray(saved.pts)) ? saved.pts : [];
+    const arr = k => (saved && Array.isArray(saved[k])) ? saved[k] : null;
+    pts = arr('pts') || []; unsure = arr('unsure') || []; detected = arr('detected');
     expected = saved ? (saved.expected ?? null) : null;
     els.empty.hidden = true; els.hud.hidden = false; els.bar.hidden = false;
     resize(); fit();
